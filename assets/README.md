@@ -1,0 +1,1 @@
+Place a project logo here, e.g. `logo.png`, and reference it from the main README.

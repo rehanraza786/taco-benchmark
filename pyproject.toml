@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taco-benchmark"
+version = "0.1.0"
+description = "TACO: Tabular Corruptions Benchmark for tabular ML robustness."
+authors = [
+    { name = "Rehan Azam" }
+]
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dependencies = [
+    # The core dependencies should match requirements.txt; keeping
+    # this short and letting users use requirements.txt for full env.
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    "matplotlib",
+    "xgboost",
+    "torch",
+]
+
+[project.urls]
+Homepage = "https://github.com/rehanraza786/taco-benchmark"
+
+[project.scripts]
+taco-benchmark = "tabular_c.cli:main"
