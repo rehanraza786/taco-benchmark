@@ -29,3 +29,6 @@ Homepage = "https://github.com/rehanraza786/taco-benchmark"
 
 [project.scripts]
 taco-benchmark = "tabular_c.cli:main"
+
+[tool.setuptools]
+packages = ["tabular_c"]
