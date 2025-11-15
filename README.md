@@ -1,6 +1,6 @@
 # TACO: Tabular Corruptions Benchmark
 
-![CI](/../../actions/workflows/ci.yml/badge.svg)
+[![CI](https://github.com/rehanraza786/taco-benchmark/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/rehanraza786/taco-benchmark/actions/workflows/ci.yaml)
 
 <p align="center">
   <img src="assets/logo.png" alt="TACO Benchmark Logo" width="320">
