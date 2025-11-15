@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+venv/
+*.pyc
+
+# Results
+results/
+*.csv
+
+.idea/
+.DS_Store
