@@ -40,6 +40,23 @@ MODEL_RF_REG = "rf_reg"
 MODEL_XGB_REG = "xgb_reg"
 MODEL_FFN_REG = "ffn_reg"
 
+MODEL_FFN_BATCH = 1024
+
+# --- Scalability Config ---
+# For models that scale poorly (like SVC RBF), cap the training sample size.
+# Set to None to use all available training data.
+SVC_MAX_TRAIN_SAMPLES = 50000
+
+# For Logistic Regression, set a high-performance solver and increase max iterations
+LOGREG_SOLVER = 'saga'
+LOGREG_MAX_ITER = 5000
+
+# For FFN, enable early stopping to prevent over-training/long-run times on large datasets.
+FFN_USE_EARLY_STOPPING = True
+# Number of epochs with no improvement (in training loss) to wait before stopping
+FFN_EARLY_STOPPING_PATIENCE = 5
+# --- End Scalability Config ---
+
 # --- Corruption Config ---
 SCALING_FACTORS = [0.45, 2.2, 3.28, 0.3048, 1.8, 0.5556]
 DEFAULT_MINORITY_LABEL = 1

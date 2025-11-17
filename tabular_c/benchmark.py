@@ -112,7 +112,6 @@ def run_regression_suite(name, X_train, X_test, y_train, y_test, results_dir,
         for corr_name, corr_fn in reg_corruptions.items():
             for s in severities:
                 Xc, _ = corr_fn(X_test, None, s, rng=random_state)
-                # <-- FIXED: Pass refit=False
                 rmse_corr, _ = evaluate_regressor(pipe, X_train, y_train, Xc, y_test, refit=False)
                 rows.append([name, config.TASK_REGRESSION, corr_name, s, model_name, config.METRIC_RMSE, rmse_corr])
 

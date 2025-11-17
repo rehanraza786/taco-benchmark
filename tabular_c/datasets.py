@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from . import config  # <-- Import config
+from . import config
 
 def infer_types(df: pd.DataFrame):
     for col in df.columns:

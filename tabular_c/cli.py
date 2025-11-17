@@ -168,7 +168,6 @@ def main():
     else:
         # --- Handle Predefined Datasets ---
         print("--- Running predefined TACO benchmarks ---")
-        # Use the DATASET_SPECS list defined at the top of this file
         for spec in DATASET_SPECS:
             name = spec["name"]
             loader_fn = spec["loader"]
