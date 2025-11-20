@@ -1,42 +1,45 @@
 #!/bin/bash
 # run_benchmark_parallel.sh
 # --------------------------------------------------------------------------------
-# Purpose: Runs the TACO benchmark across all specified datasets in parallel
-#          to dramatically reduce total execution time.
+# Purpose: Runs the TACO benchmark across all specified datasets in parallel.
+#          Optimized for high-throughput execution on multi-core systems.
 #
-# Usage: ./run_benchmark_parallel.sh [DATA_DIR] [RESULTS_DIR] [ONLY_DATASET_LIST]
-#        Example: ./run_benchmark_parallel.sh data results diabetes,porto,ieee,nyc
+# Usage: ./run_benchmark_parallel.sh [DATA_DIR] [RESULTS_DIR] [DATASETS]
+#        Example: ./run_benchmark_parallel.sh data results_v1 adult,diabetes
 # --------------------------------------------------------------------------------
 
+set -e  # Exit immediately if a command exits with a non-zero status.
+
 # Configuration
-DATA_DIR="${1:-data}"        # Defaults to 'data' if not provided
-RESULTS_DIR="${2:-results}"  # Defaults to 'results' if not provided
-# List of datasets from config.py/cli.py. Use 'all' if no list is provided.
+DATA_DIR="${1:-data}"
+RESULTS_DIR="${2:-results}"
 DATASETS_LIST="${3:-adult,diabetes,porto,ieee,nyc}"
 
 # Convert comma-separated string to an array
 IFS=',' read -r -a DATASETS <<< "$DATASETS_LIST"
 
-# This ensures that the script runs from the directory where 'tabular-c' is located.
-# ${BASH_SOURCE[0]} is the path to the currently executing script.
 SCRIPT_DIR=$(dirname "${BASH_SOURCE[0]}")
 PROJECT_ROOT=$(cd "$SCRIPT_DIR" && pwd)
 
+# Ensure results directory exists
+mkdir -p "$RESULTS_DIR"
+
 echo "======================================================"
-echo "TACO Benchmark Parallel Runner"
-echo "Project Root (Current Directory for jobs): $PROJECT_ROOT"
-echo "Data Directory: $DATA_DIR"
-echo "Results Directory: $RESULTS_DIR"
-echo "Datasets to run: ${DATASETS[*]}"
+echo "🌮 TACO Benchmark Parallel Runner"
+echo "------------------------------------------------------"
+echo "Project Root : $PROJECT_ROOT"
+echo "Data Dir     : $DATA_DIR"
+echo "Results Dir  : $RESULTS_DIR"
+echo "Datasets     : ${DATASETS[*]}"
 echo "======================================================"
 
-# Array to store the Process IDs (PIDs) of background jobs
 PIDS=()
 
-# --- Start Parallel Jobs ---
 for dataset in "${DATASETS[@]}"; do
-    echo "[LAUNCHING] Starting benchmark for dataset: $dataset..."
+    echo "[LAUNCHING] $dataset..."
 
+    # Run in background
+    # We explicitly use python -m tabular_c.cli to ensure relative imports work
     (
         cd "$PROJECT_ROOT" || exit
         python -m tabular_c.cli \
@@ -46,37 +49,28 @@ for dataset in "${DATASETS[@]}"; do
             > "$RESULTS_DIR/${dataset}_log.txt" 2>&1
     ) &
 
-    # Save the Process ID for later waiting
     PIDS+=($!)
 done
 
 echo "------------------------------------------------------"
-echo "All ${#DATASETS[@]} jobs launched in the background. Waiting for completion..."
+echo "All jobs launched. Logs are being written to $RESULTS_DIR/"
+echo "Waiting for completion..."
 echo "------------------------------------------------------"
 
-
-# --- Wait for All Jobs to Complete ---
-SUCCESS_COUNT=0
-FAILURE_COUNT=0
-
+FAILURES=0
 for pid in "${PIDS[@]}"; do
-    # Wait for a specific process ID
-    # Note: wait "$pid" must be called outside the subshell ( )
     if wait "$pid"; then
-        echo "[SUCCESS] Process $pid finished successfully."
-        SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+        echo "[DONE] Process $pid finished."
     else
-        echo "[FAILURE] Process $pid exited with an error. Check logs in $RESULTS_DIR."
-        FAILURE_COUNT=$((FAILURE_COUNT + 1))
+        echo "[ERROR] Process $pid failed."
+        FAILURES=$((FAILURES + 1))
     fi
 done
 
-
-# --- Final Summary ---
 echo "======================================================"
-echo "PARALLEL BENCHMARK COMPLETE"
-echo "Successful runs: $SUCCESS_COUNT"
-echo "Failed runs: $FAILURE_COUNT"
-echo "Results written to $RESULTS_DIR/*.csv"
-echo "Individual logs available in $RESULTS_DIR/*.txt"
+if [ $FAILURES -eq 0 ]; then
+    echo "✅ BENCHMARK COMPLETE - ALL SUCCESS"
+else
+    echo "❌ BENCHMARK COMPLETE - $FAILURES FAILURES"
+fi
 echo "======================================================"

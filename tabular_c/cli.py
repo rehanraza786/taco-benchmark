@@ -1,6 +1,9 @@
 """
 Command-line interface for the TACO benchmark.
 """
+# Config must be imported FIRST to set threading env vars
+# before numpy/pandas initialize their BLAS backends.
+from . import config
 
 import argparse
 import os
@@ -8,20 +11,18 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 
-from . import config
 from .benchmark import run_classification_suite, run_regression_suite
 from .api import run_benchmark
 from .datasets import (
-    infer_types,
     load_adult,
     load_diabetes_130,
     load_porto_seguro,
     load_ieee_cis,
     load_nyc_property_sales,
 )
+from .utils import infer_types
 
 # --- DATASET_SPECS ---
-# This list drives the CLI and loader logic
 DATASET_SPECS = [
     {
         "name": "adult",
@@ -57,9 +58,10 @@ DATASET_SPECS = [
 # ---------------------------------------------
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--data_dir", default=config.DEFAULT_DATA_DIR)
-    ap.add_argument("--results_dir", default=config.DEFAULT_RESULTS_DIR)
+    """Main CLI entry point."""
+    ap = argparse.ArgumentParser(description="TACO: Tabular Corruptions Benchmark CLI")
+    ap.add_argument("--data_dir", default=config.DEFAULT_DATA_DIR, help="Path to data directory.")
+    ap.add_argument("--results_dir", default=config.DEFAULT_RESULTS_DIR, help="Path for output files.")
     ap.add_argument(
         "--only",
         default="all",
@@ -73,24 +75,14 @@ def main():
     )
 
     # --- Arguments for Generic CSVs ---
-    ap.add_argument(
-        "--csv",
-        type=str,
-        default=None,
-        help="Path to a custom CSV file to run in 'generic' mode."
-    )
-    ap.add_argument(
-        "--target_col",
-        type=str,
-        default=None,
-        help="Name of the target column in the custom CSV."
-    )
+    ap.add_argument("--csv", type=str, default=None, help="Path to a custom CSV file.")
+    ap.add_argument("--target_col", type=str, default=None, help="Name of the target column.")
     ap.add_argument(
         "--task",
         type=str,
         default=None,
         choices=[config.TASK_CLASSIFICATION, config.TASK_REGRESSION, "both"],
-        help="Specify the task type for custom CSVs. (default: auto-inferred)"
+        help="Specify the task type for custom CSVs."
     )
 
     args = ap.parse_args()
@@ -109,15 +101,13 @@ def main():
             return
 
         if args.target_col not in df.columns:
-            print(f"Error: Target column '{args.target_col}' not found in {args.csv}.")
-            print(f"Available columns are: {df.columns.tolist()}")
+            print(f"Error: Target column '{args.target_col}' not found.")
             return
 
         y = df[args.target_col]
         X = df.drop(columns=[args.target_col])
         X = infer_types(X)
 
-        # 1. Infer task first
         y_arr = np.asarray(y)
         if np.issubdtype(y_arr.dtype, np.integer) or y_arr.dtype == bool:
             inferred_task = config.TASK_CLASSIFICATION
@@ -126,41 +116,21 @@ def main():
             inferred_task = config.TASK_REGRESSION
             stratify = None
 
-        # 2. Determine what task(s) to run
-        tasks_to_run = []
-        if args.task:
-            if args.task == "both":
-                tasks_to_run = [config.TASK_CLASSIFICATION, config.TASK_REGRESSION]
-            else:
-                tasks_to_run = [args.task]
-        else:
-            tasks_to_run = [inferred_task]
+        tasks_to_run = [args.task] if args.task and args.task != "both" else ([config.TASK_CLASSIFICATION, config.TASK_REGRESSION] if args.task == "both" else [inferred_task])
 
-        # 3. Create splits
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y,
-            test_size=config.TEST_SIZE,
-            random_state=config.RANDOM_STATE,
-            stratify=stratify
+            X, y, test_size=config.TEST_SIZE, random_state=config.RANDOM_STATE, stratify=stratify
         )
 
-        # 4. Run the benchmark
         dataset_name = os.path.basename(args.csv).replace(".csv", "")
 
         for task in tasks_to_run:
             print(f"\n--- Running task: {task} for {dataset_name} ---")
             run_benchmark(
                 dataset_name=dataset_name,
-                X_train=X_train,
-                X_test=X_test,
-                y_train=y_train,
-                y_test=y_test,
-                results_dir=args.results_dir,
-                severities=severities,
-                task=task
+                X_train=X_train, X_test=X_test, y_train=y_train, y_test=y_test,
+                results_dir=args.results_dir, severities=severities, task=task
             )
-
-        print(f"--- Custom run for {dataset_name} complete. ---")
 
     elif args.csv or args.target_col:
         print("Error: --csv and --target_col must be used together.")
@@ -170,29 +140,21 @@ def main():
         print("--- Running predefined TACO benchmarks ---")
         for spec in DATASET_SPECS:
             name = spec["name"]
-            loader_fn = spec["loader"]
-            task = spec["task"]
+            if args.only not in ("all", name): continue
 
-            if args.only not in ("all", name):
-                continue
-
-            print(f"--- Running dataset: {name} ({task}) ---")
+            print(f"--- Running dataset: {name} ({spec['task']}) ---")
             path = os.path.join(args.data_dir, spec["filename"])
 
-            X_train, X_test, y_train, y_test = loader_fn(
-                path=path, random_state=config.RANDOM_STATE
-            )
+            try:
+                X_train, X_test, y_train, y_test = spec["loader"](path=path, random_state=config.RANDOM_STATE)
+            except FileNotFoundError as e:
+                print(f"Skipping {name}: {e}")
+                continue
 
-            if task == config.TASK_CLASSIFICATION:
-                run_classification_suite(
-                    name, X_train, X_test, y_train, y_test,
-                    args.results_dir, severities=severities, random_state=config.RANDOM_STATE,
-                )
-            elif task == config.TASK_REGRESSION:
-                run_regression_suite(
-                    name, X_train, X_test, y_train, y_test,
-                    args.results_dir, severities=severities, random_state=config.RANDOM_STATE,
-                )
+            if spec["task"] == config.TASK_CLASSIFICATION:
+                run_classification_suite(name, X_train, X_test, y_train, y_test, args.results_dir, severities, config.RANDOM_STATE)
+            elif spec["task"] == config.TASK_REGRESSION:
+                run_regression_suite(name, X_train, X_test, y_train, y_test, args.results_dir, severities, config.RANDOM_STATE)
 
         print("--- TACO Benchmark run complete. ---")
 

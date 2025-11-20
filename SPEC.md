@@ -1,78 +1,52 @@
 # TACO Benchmark Specification
 
 This document describes the core expectations for the TACO (Tabular Corruptions)
-benchmark so that others can reproduce your setup or extend it.
+benchmark to ensure reproducibility and standardized evaluation.
 
-## Goals
+## 🎯 Goals
 
-- Provide an ImageNet-C–style robustness benchmark for tabular models.
+- Provide an ImageNet-C–style robustness benchmark specifically for tabular data.
 - Standardize:
-  - Datasets and splits
-  - Corruptions and severity levels
-  - Model families and default hyperparameters
-  - Evaluation metrics and file formats
+  - **Data Loading:** Zero-copy, type-safe loading with stratification.
+  - **Corruptions:** Deterministic application of realistic data faults.
+  - **Evaluation:** Unified metrics (AUC/RMSE) across diverse model families.
 
-## Datasets
+## 💾 Datasets
 
-Current reference datasets:
+| Dataset | Task | Metric | Source |
+| :--- | :--- | :--- | :--- |
+| **Adult** | Classification | AUC | UCI |
+| **Diabetes 130-US** | Classification | AUC | UCI |
+| **Porto Seguro** | Classification | AUC | Kaggle |
+| **IEEE-CIS Fraud** | Classification | AUC | Kaggle |
+| **NYC Property** | Regression | RMSE | NYC Open Data |
 
-- **Adult** (UCI) — binary classification, income > 50K
-- **Diabetes 130-US Hospitals** — readmission classification
-- **Porto Seguro Safe Driver** — insurance claim classification
-- **IEEE-CIS Fraud Detection** — transaction fraud classification
-- **NYC Property Sales** — log sale price regression
+*Note: All datasets are expected as CSVs in `./data/`.*
 
-All datasets are expected as CSVs in `./data/`.
+## 🧪 Corruptions
 
-## Corruptions
+Implemented in `tabular_c/corruptions.py`. Default severities are `{0.1, 0.2, 0.4}`.
 
-Implemented in `tabular_c/corruptions.py` and exposed via `CORRUPTION_FUNCS`.
+1.  **Missingness (MCAR):** Randomly drops values across columns.
+2.  **Missingness (MNAR):** Drops values conditional on the minority class (classification only).
+3.  **Scaling Errors:** Multiplies numerical features by random unit conversion factors (e.g., meters to feet).
+4.  **Categorical Remapping:** Shuffles the integer mapping of categorical encodings.
+5.  **Noise Injection:** Adds Gaussian or Uniform noise scaled to the feature's standard deviation.
+6.  **Rare Class Dilution:** Randomly removes instances of the minority class (Classification only).
+7.  **Mixed Severity:** Applies two corruptions sequentially (e.g., Missingness + Noise).
 
-Each corruption is a function:
+## ⚙️ Models
 
-```python
-def fn(X: pd.DataFrame, y, severity: float, rng=None) -> tuple[pd.DataFrame, pd.Series]:
-    ...
-```
+The benchmark evaluates the following families (implemented in `tabular_c/models.py`):
 
-with `severity` in `{0.1, 0.2, 0.4}` by default.
+- **Linear:** Logistic Regression / Linear Regression (SAGA solver).
+- **SVM:** SGD-based approximation with Nystroem kernel approximation.
+- **Trees:** Random Forest and XGBoost (Histogram-based).
+- **Deep Learning:** Feedforward Neural Network (PyTorch) with large batch inference.
 
-Corruption families include (non-exhaustive):
+## 🔁 Reproducibility Protocol
 
-- Missingness (MCAR, MNAR)
-- Scaling errors (unit mismatches)
-- Categorical remapping
-- Noise injection (Gaussian, uniform)
-- Rare-class dilution (classification only)
-
-## Evaluation protocol
-
-- Train models on **clean** training data only.
-- Evaluate on:
-  - Clean test data (baseline)
-  - Corrupted test data for each corruption × severity
-  - Optionally, multi-corruption compositions
-
-For each dataset and model:
-
-- For classification: record AUC, accuracy, precision, recall and confusion matrices.
-- For regression: record RMSE.
-
-Metrics are saved as CSVs (one row per `(dataset, model, corruption, severity, metric)`)
-in a `results/` directory (created if needed).
-
-## Models
-
-At minimum, the following model families are supported:
-
-- Logistic Regression / Linear Regression
-- SVM / SVR (RBF)
-- Random Forest (Classifier / Regressor)
-- XGBoost (Classifier / Regressor)
-- Feedforward neural network (PyTorch)
-
-## Reproducibility
-
-- Use a fixed random seed (e.g. `random_state=42`) for splits and corruptions.
-- Do not leak corrupted data into training; all corruptions apply to test only.
-- Keep the CSV layout stable so downstream analysis scripts can rely on it.
+1.  **Seeding:** A master `RANDOM_STATE` (default 42) generates a unique, deterministic integer seed for *every* specific corruption task. This ensures that "Missingness" and "Noise" do not share the same entropy source.
+2.  **Splits:** Train/Test splits are stratified and fixed.
+3.  **Isolation:** Corruptions are applied **only** to the test set at inference time. The training set remains clean.
+4.  **Environment:** Threading is explicitly locked to `1` per worker (via `OMP_NUM_THREADS`, `torch.set_num_threads`) to prevent OS thrashing during parallel execution.

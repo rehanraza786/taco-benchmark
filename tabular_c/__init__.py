@@ -8,7 +8,22 @@ This package exposes:
 - tabular_c.models: model builders and evaluators
 - tabular_c.api: public programmatic entrypoints (run_benchmark)
 """
-__all__ = ["benchmark", "datasets", "corruptions", "models", "plots", "utils", "cli", "api"]
-__version__ = "0.1.0"
-
+# Import config FIRST to ensure threading environment variables
+# (OMP_NUM_THREADS, etc.) are set before numpy/pandas/torch initialize in submodules.
+from . import config
 from .api import run_benchmark
+
+__all__ = [
+    "run_benchmark",
+    "config",
+    "benchmark",
+    "datasets",
+    "corruptions",
+    "models",
+    "plots",
+    "utils",
+    "cli",
+    "api"
+]
+
+__version__ = "0.1.0"

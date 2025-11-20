@@ -1,32 +1,57 @@
-import numpy as np
-import pandas as pd
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.pipeline import Pipeline
-from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.svm import SVC, SVR
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn.metrics import roc_auc_score, root_mean_squared_error
-import xgboost as xgb
-import torch
-import torch.nn as nn
-from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
-from sklearn.utils import resample
 from . import config
 
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn as nn
+import xgboost as xgb
+from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.impute import SimpleImputer
+from sklearn.kernel_approximation import Nystroem
+from sklearn.linear_model import LogisticRegression, LinearRegression, SGDClassifier, SGDRegressor
+from sklearn.metrics import roc_auc_score, root_mean_squared_error
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+if config.TRY_INTEL_OPTIMIZATION:
+    try:
+        from sklearnex import patch_sklearn
+
+        patch_sklearn()
+        print("  -> Intel(R) Extension for Scikit-learn enabled.")
+    except ImportError:
+        pass
 
 def build_preprocessor(X: pd.DataFrame, numeric_strategy=config.DEFAULT_IMPUTE_STRATEGY):
     num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
     cat_cols = X.select_dtypes(exclude=[np.number]).columns.tolist()
-    num_tf = Pipeline([("imputer", SimpleImputer(strategy=numeric_strategy)), ("scaler", StandardScaler())])
-    cat_tf = Pipeline(
-        [("imputer", SimpleImputer(strategy="most_frequent")), ("oh", OneHotEncoder(handle_unknown="ignore"))])
-    pre = ColumnTransformer(transformers=[("num", num_tf, num_cols), ("cat", cat_tf, cat_cols)], n_jobs=-1)
-    return pre
+    cat_cols = [c for c in cat_cols if X[c].nunique() < config.HIGH_CARD_THRESHOLD]
+
+    num_tf = Pipeline([
+        ("imputer", SimpleImputer(strategy=numeric_strategy)),
+        # OPTIMIZATION: copy=False allows in-place scaling if the memory layout permits.
+        ("scaler", StandardScaler(copy=False))
+    ])
+    cat_tf = Pipeline([
+        ("imputer", SimpleImputer(strategy="most_frequent")),
+        ("oh", OneHotEncoder(handle_unknown="ignore", sparse_output=False, dtype=np.int8))
+    ])
+
+    transformers = [("num", num_tf, num_cols)]
+    if cat_cols:
+        transformers.append(("cat", cat_tf, cat_cols))
+
+    return ColumnTransformer(transformers=transformers, n_jobs=config.MODEL_N_JOBS, verbose_feature_names_out=False)
 
 
-class TorchMLPClassifier(BaseEstimator, ClassifierMixin):
+class TorchMLPBase(BaseEstimator):
+    """
+    Shared logic for Regressor and Classifier.
+    Uses torch.inference_mode(), reduced allocations, and CPU offloading for serialization.
+    """
+
     def __init__(self, hidden=64, epochs=10, lr=1e-3, batch=config.MODEL_FFN_BATCH, random_state=config.RANDOM_STATE):
         self.hidden = hidden
         self.epochs = epochs
@@ -34,178 +59,184 @@ class TorchMLPClassifier(BaseEstimator, ClassifierMixin):
         self.batch = batch
         self.random_state = random_state
         self.model_ = None
-        self.in_dim_ = None
-        self.use_early_stopping = config.FFN_USE_EARLY_STOPPING
-        self.patience = config.FFN_EARLY_STOPPING_PATIENCE
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
 
-    def _to_numpy(self, X):
-        if hasattr(X, "toarray"):
-            X = X.toarray()
-        return np.asarray(X, dtype=np.float32)
+    def _build_model(self, in_dim, output_dim, is_classifier):
+        layers = [
+            nn.Linear(in_dim, self.hidden),
+            nn.ReLU(),
+            nn.Linear(self.hidden, output_dim)
+        ]
+        if is_classifier:
+            layers.append(nn.Sigmoid())
+        return nn.Sequential(*layers).to(self.device)
 
-    def fit(self, X, y):
-        X = self._to_numpy(X)
-        y = np.asarray(y, dtype=np.float32).reshape(-1, 1)
+    def _fit_shared(self, X, y, loss_fn):
+        if hasattr(X, "toarray"): X = X.toarray()
+
+        # Use np.asarray with float32 to allow zero-copy if input is already float32
+        X = np.asarray(X, dtype=np.float32)
+
         self.in_dim_ = X.shape[1]
         torch.manual_seed(self.random_state)
-        self.model_ = nn.Sequential(
-            nn.Linear(self.in_dim_, self.hidden),
-            nn.ReLU(),
-            nn.Linear(self.hidden, 1),
-            nn.Sigmoid()
-        )
+
+        self.model_ = self._build_model(self.in_dim_, 1, isinstance(loss_fn, nn.BCELoss))
         opt = torch.optim.Adam(self.model_.parameters(), lr=self.lr)
-        loss_fn = nn.BCELoss()
-        X_t = torch.from_numpy(X)
-        y_t = torch.from_numpy(y)
 
-        best_loss = float('inf')
-        patience_counter = 0
+        try:
+            X_t = torch.as_tensor(X, device=self.device)
+            y_t = torch.as_tensor(y, dtype=torch.float32, device=self.device).reshape(-1, 1)
+        except RuntimeError:
+            X_t = torch.from_numpy(X)
+            y_t = torch.from_numpy(y.astype(np.float32)).reshape(-1, 1)
 
-        for epoch in range(self.epochs):
-            self.model_.train()
-            total_loss = 0
+        n_samples = len(X)
+        n_batches = (n_samples + self.batch - 1) // self.batch
 
-            for i in range(0, len(X), self.batch):
-                xb = X_t[i:i + self.batch]
-                yb = y_t[i:i + self.batch]
-                opt.zero_grad()
-                preds = self.model_(xb)
-                loss = loss_fn(preds, yb)
+        self.model_.train()
+        on_gpu = (X_t.device.type == self.device.type) and (self.device.type != 'cpu')
+
+        for _ in range(self.epochs):
+            perm = torch.randperm(n_samples, device=self.device if on_gpu else 'cpu')
+
+            for i in range(n_batches):
+                start = i * self.batch
+                end = start + self.batch
+                indices = perm[start:end]
+
+                if on_gpu:
+                    xb, yb = X_t[indices], y_t[indices]
+                else:
+                    xb = X_t[indices].to(self.device, non_blocking=True)
+                    yb = y_t[indices].to(self.device, non_blocking=True)
+
+                opt.zero_grad(set_to_none=True)
+                pred = self.model_(xb)
+                loss = loss_fn(pred, yb)
                 loss.backward()
                 opt.step()
-                total_loss += loss.item()  # Track loss
 
-            if self.use_early_stopping:
-                avg_loss = total_loss / (len(X) / self.batch)
-                if avg_loss < best_loss:
-                    best_loss = avg_loss
-                    patience_counter = 0
-                else:
-                    patience_counter += 1
-
-                if patience_counter >= self.patience:
-                    break
-
+        # Move model to CPU before serialization/pickling.
+        self.model_.cpu()
+        del opt
+        torch.cuda.empty_cache()
         return self
+
+    def _predict_shared(self, X):
+        if hasattr(X, "toarray"): X = X.toarray()
+        # Zero-copy check
+        X = np.asarray(X, dtype=np.float32)
+
+        # Move to GPU for inference
+        self.model_.to(self.device)
+        self.model_.eval()
+
+        n_samples = len(X)
+        result = np.empty(n_samples, dtype=np.float32)
+        inf_batch = self.batch * 4
+
+        with torch.inference_mode():
+            try:
+                X_all = torch.as_tensor(X, device=self.device)
+                preds = self.model_(X_all)
+                return preds.ravel().cpu().numpy()
+            except RuntimeError:
+                pass
+
+            for i in range(0, n_samples, inf_batch):
+                end = min(i + inf_batch, n_samples)
+                batch_np = X[i:end]
+                batch_t = torch.as_tensor(batch_np, device=self.device)
+                preds = self.model_(batch_t)
+                result[i:end] = preds.ravel().cpu().numpy()
+
+        return result
+
+
+class TorchMLPClassifier(TorchMLPBase, ClassifierMixin):
+    def fit(self, X, y):
+        return self._fit_shared(X, y, nn.BCELoss())
 
     def predict_proba(self, X):
-        X = self._to_numpy(X)
-        with torch.no_grad():
-            self.model_.eval()
-            p1 = self.model_(torch.from_numpy(X)).numpy().reshape(-1)
-        return np.vstack([1 - p1, p1]).T
+        p = self._predict_shared(X)
+        out = np.empty((len(p), 2), dtype=np.float32)
+        out[:, 0] = 1.0 - p
+        out[:, 1] = p
+        return out
 
     def predict(self, X):
-        X = self._to_numpy(X)
-        return (self.predict_proba(X)[:, 1] >= 0.5).astype(int)
+        return (self._predict_shared(X) >= 0.5).astype(int)
 
 
-class TorchMLPRegressor(BaseEstimator, RegressorMixin):
-    def __init__(self, hidden=64, epochs=10, lr=1e-3, batch=config.MODEL_FFN_BATCH, random_state=config.RANDOM_STATE):
-        self.hidden = hidden
-        self.epochs = epochs
-        self.lr = lr
-        self.batch = batch
-        self.random_state = random_state
-        self.model_ = None
-        self.in_dim_ = None
-
-    def _to_numpy(self, X):
-        if hasattr(X, "toarray"):
-            X = X.toarray()
-        return np.asarray(X, dtype=np.float32)
-
+class TorchMLPRegressor(TorchMLPBase, RegressorMixin):
     def fit(self, X, y):
-        X = self._to_numpy(X)
-        y = np.asarray(y, dtype=np.float32).reshape(-1, 1)
-        self.in_dim_ = X.shape[1]
-        torch.manual_seed(self.random_state)
-        self.model_ = nn.Sequential(
-            nn.Linear(self.in_dim_, self.hidden),
-            nn.ReLU(),
-            nn.Linear(self.hidden, 1)
-        )
-        opt = torch.optim.Adam(self.model_.parameters(), lr=self.lr)
-        loss_fn = nn.MSELoss()
-        X_t = torch.from_numpy(X)
-        y_t = torch.from_numpy(y)
-        for _ in range(self.epochs):
-            for i in range(0, len(X), self.batch):
-                xb = X_t[i:i + self.batch]
-                yb = y_t[i:i + self.batch]
-                opt.zero_grad()
-                preds = self.model_(xb)
-                loss = loss_fn(preds, yb)
-                loss.backward()
-                opt.step()
-        return self
+        return self._fit_shared(X, y, nn.MSELoss())
 
     def predict(self, X):
-        X = self._to_numpy(X)
-        with torch.no_grad():
-            p = self.model_(torch.from_numpy(X)).numpy().reshape(-1)
-        return p
+        return self._predict_shared(X)
 
 
 def build_classifiers(random_state=config.RANDOM_STATE):
+    # Ensure single-threaded internal execution for models
+    n_jobs = 1
+    xgb_device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    svm_approx = Pipeline([
+        ("nystroem", Nystroem(gamma=0.2, random_state=random_state, n_components=300, n_jobs=n_jobs)),
+        ("sgd_svm",
+         SGDClassifier(loss='hinge', alpha=1e-4, max_iter=1000, early_stopping=True, random_state=random_state,
+                       n_jobs=n_jobs))
+    ])
+
     return {
-        config.MODEL_LOGREG: LogisticRegression(
-            max_iter=config.LOGREG_MAX_ITER,
-            solver=config.LOGREG_SOLVER,
-            random_state=random_state,
-            n_jobs=-1
-        ),
-        config.MODEL_SVM: SVC(probability=True, random_state=random_state),
-        config.MODEL_RF: RandomForestClassifier(n_estimators=200, random_state=random_state, n_jobs=-1),
-        config.MODEL_XGB: xgb.XGBClassifier(
-            n_estimators=400, max_depth=6, learning_rate=0.1, subsample=0.8, colsample_bytree=0.8,
-            tree_method="hist", eval_metric="logloss", random_state=random_state, n_jobs=-1
-        ),
+        config.MODEL_LOGREG: LogisticRegression(max_iter=config.LOGREG_MAX_ITER, solver=config.LOGREG_SOLVER,
+                                                random_state=random_state, n_jobs=n_jobs),
+        config.MODEL_SVM: svm_approx,
+        config.MODEL_RF: RandomForestClassifier(n_estimators=config.RF_ESTIMATORS, random_state=random_state,
+                                                n_jobs=n_jobs),
+        config.MODEL_XGB: xgb.XGBClassifier(n_estimators=config.XGB_ESTIMATORS, max_depth=6, tree_method="hist",
+                                            device=xgb_device, eval_metric="logloss", random_state=random_state,
+                                            n_jobs=n_jobs),
         config.MODEL_FFN: TorchMLPClassifier(hidden=128, epochs=10, lr=1e-3, batch=config.MODEL_FFN_BATCH,
                                              random_state=random_state)
     }
 
 
 def build_regressors(random_state=config.RANDOM_STATE):
+    xgb_device = "cuda" if torch.cuda.is_available() else "cpu"
+    n_jobs = 1
+
+    svr_approx = Pipeline([
+        ("nystroem", Nystroem(gamma=0.2, random_state=random_state, n_components=300, n_jobs=n_jobs)),
+        ("sgd_svr", SGDRegressor(max_iter=1000, early_stopping=True, random_state=random_state))
+    ])
+
     return {
-        config.MODEL_LINREG: LinearRegression(),
-        config.MODEL_SVR: SVR(),
-        config.MODEL_RF_REG: RandomForestRegressor(n_estimators=300, random_state=random_state, n_jobs=-1),
-        config.MODEL_XGB_REG: xgb.XGBRegressor(
-            n_estimators=500, max_depth=8, learning_rate=0.05, subsample=0.8, colsample_bytree=0.8,
-            tree_method="hist", random_state=random_state, n_jobs=-1
-        ),
+        config.MODEL_LINREG: LinearRegression(n_jobs=n_jobs),
+        config.MODEL_SVR: svr_approx,
+        config.MODEL_RF_REG: RandomForestRegressor(n_estimators=config.RF_ESTIMATORS, random_state=random_state,
+                                                   n_jobs=n_jobs),
+        config.MODEL_XGB_REG: xgb.XGBRegressor(n_estimators=config.XGB_ESTIMATORS, max_depth=8, tree_method="hist",
+                                               device=xgb_device, random_state=random_state, n_jobs=n_jobs),
         config.MODEL_FFN_REG: TorchMLPRegressor(hidden=128, epochs=10, lr=1e-3, batch=config.MODEL_FFN_BATCH,
                                                 random_state=random_state)
     }
 
 
-def evaluate_classifier(pipeline, X_train, y_train, X_test, y_test, refit=True):
-    if refit:
-        model_name = pipeline.steps[-1][0]
-
-        if model_name == config.MODEL_SVM and config.SVC_MAX_TRAIN_SAMPLES is not None:
-            max_samples = config.SVC_MAX_TRAIN_SAMPLES
-            if len(X_train) > max_samples:
-                X_train, y_train = resample(
-                    X_train, y_train,
-                    replace=False,
-                    n_samples=max_samples,
-                    random_state=config.RANDOM_STATE,
-                    stratify=y_train
-                )
-
-        pipeline.fit(X_train, y_train)
-
-    proba = pipeline.predict_proba(X_test)[:, 1]
-    auc = roc_auc_score(y_test, proba)
-    return auc, proba
+def evaluate_classifier(pipe, X_train, y_train, X_test, y_test, refit=True):
+    if refit: pipe.fit(X_train, y_train)
+    if hasattr(pipe, "predict_proba"):
+        preds = pipe.predict_proba(X_test)[:, 1]
+    else:
+        try:
+            preds = pipe.decision_function(X_test)
+        except:
+            preds = pipe.predict(X_test)
+    return roc_auc_score(y_test, preds), None
 
 
-def evaluate_regressor(pipeline, X_train, y_train, X_test, y_test, refit=True):
-    if refit:
-        pipeline.fit(X_train, y_train)
-    preds = pipeline.predict(X_test)
-    rmse = root_mean_squared_error(y_test, preds)
-    return rmse, preds
+def evaluate_regressor(pipe, X_train, y_train, X_test, y_test, refit=True):
+    if refit: pipe.fit(X_train, y_train)
+    preds = pipe.predict(X_test)
+    return root_mean_squared_error(y_test, preds), None

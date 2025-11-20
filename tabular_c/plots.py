@@ -1,11 +1,21 @@
+"""
+Plotting utilities for visualization of benchmark results.
+"""
 import os
+import matplotlib
+
+# Use non-interactive backend.
+# This is 2-3x faster for saving files and prevents crashes on headless servers.
+matplotlib.use('Agg')
+
 import matplotlib.pyplot as plt
 from .utils import ensure_dir
 
-
 def plot_bar_clean(df, dataset_name, results_dir):
+    """Plots a bar chart of clean baseline performance across models."""
     met = df["metric"].iloc[0]
     clean = df[df["corruption"] == "clean"]
+
     plt.figure()
     xs = range(len(clean))
     plt.bar(xs, clean["value"])
@@ -13,12 +23,16 @@ def plot_bar_clean(df, dataset_name, results_dir):
     plt.ylabel(met)
     plt.title(f"{dataset_name} — Clean {met} by Model")
     plt.tight_layout()
+
     fp = os.path.join(results_dir, f"{dataset_name}_clean_{met}_bar.png")
-    plt.savefig(fp)
+    plt.savefig(fp, dpi=150)
     plt.close()
 
 
 def plot_degradation(df, dataset_name, results_dir):
+    """
+    Plots performance degradation curves for each corruption type.
+    """
     metric = df["metric"].iloc[0]
     models = sorted(df["model"].unique())
     corrs = sorted([c for c in df["corruption"].unique() if c != "clean"])
@@ -27,19 +41,17 @@ def plot_degradation(df, dataset_name, results_dir):
     ensure_dir(plot_dir)
 
     for corr in corrs:
-        plt.figure(figsize=(10, 6))
+        fig = plt.figure(figsize=(10, 6))
         sub = df[df["corruption"] == corr]
         if sub.empty:
+            plt.close(fig)
             continue
 
-        # Try to convert to float for sorting, but keep original values
         try:
-            # For single corruptions (0.1, 0.2, 0.4)
             svals_num = sub["severity"].unique().astype(float)
             svals = sorted(svals_num)
             is_categorical = False
         except ValueError:
-            # For multi-corruptions ("0.1+0.1", "0.1+0.2", etc.)
             svals = sorted(sub["severity"].unique(), key=lambda s: tuple(map(float, s.split('+'))))
             is_categorical = True
 
@@ -64,6 +76,7 @@ def plot_degradation(df, dataset_name, results_dir):
         plt.ylabel(metric)
         plt.legend()
         plt.tight_layout()
+
         out = os.path.join(plot_dir, f"{dataset_name}_{corr_filename}_{metric}_curve.png")
-        plt.savefig(out)
-        plt.close()
+        plt.savefig(out, dpi=150)
+        plt.close(fig)

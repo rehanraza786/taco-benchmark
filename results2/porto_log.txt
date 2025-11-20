@@ -1,0 +1,125 @@
+--- Running predefined TACO benchmarks ---
+--- Running dataset: porto (classification) ---
+[porto] Running logreg (clean)...
+/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py:146: UserWarning: resource_tracker: process died unexpectedly, relaunching. Some folders/semaphores might leak.
+  warnings.warn(
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/runpy.py", line 197, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/runpy.py", line 87, in _run_code
+    exec(code, run_globals)
+  File "/Users/razam/Desktop/Stanford/CS229/Project/taco-benchmark/tabular_c/cli.py", line 206, in <module>
+    main()
+  File "/Users/razam/Desktop/Stanford/CS229/Project/taco-benchmark/tabular_c/cli.py", line 193, in main
+    run_classification_suite(
+  File "/Users/razam/Desktop/Stanford/CS229/Project/taco-benchmark/tabular_c/benchmark.py", line 78, in run_classification_suite
+    auc_corr, _ = evaluate_classifier(pipe, X_train, y_train, Xc, yc, refit=False)
+  File "/Users/razam/Desktop/Stanford/CS229/Project/taco-benchmark/tabular_c/models.py", line 201, in evaluate_classifier
+    proba = pipeline.predict_proba(X_test)[:, 1]
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/sklearn/pipeline.py", line 903, in predict_proba
+    Xt = transform.transform(Xt)
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/sklearn/utils/_set_output.py", line 319, in wrapped
+    data_to_wrap = f(self, X, *args, **kwargs)
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/sklearn/compose/_column_transformer.py", line 1101, in transform
+    Xs = self._call_func_on_transformers(
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/sklearn/compose/_column_transformer.py", line 910, in _call_func_on_transformers
+    return Parallel(n_jobs=self.n_jobs)(jobs)
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/sklearn/utils/parallel.py", line 77, in __call__
+    return super().__call__(iterable_with_config)
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/parallel.py", line 2072, in __call__
+    return output if self.return_generator else list(output)
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/parallel.py", line 1682, in _get_outputs
+    yield from self._retrieve()
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/parallel.py", line 1784, in _retrieve
+    self._raise_error_fast()
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/parallel.py", line 1859, in _raise_error_fast
+    error_job.get_result(self.timeout)
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/parallel.py", line 758, in get_result
+    return self._return_or_raise()
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/parallel.py", line 773, in _return_or_raise
+    raise self._result
+joblib.externals.loky.process_executor.TerminatedWorkerError: A worker process managed by the executor was unexpectedly terminated. This could be caused by a segmentation fault while calling the function or by an excessive memory usage causing the Operating System to kill the worker.
+
+The exit codes of the workers are {SIGKILL(-9), SIGKILL(-9), SIGKILL(-9), SIGKILL(-9), SIGKILL(-9), SIGKILL(-9), SIGKILL(-9), SIGKILL(-9)}
+Detailed tracebacks of the workers should have been printed to stderr in the executor process if faulthandler was not disabled.
+[porto] Running logreg (single corruptions)...
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/loky-47654-hm1iablj'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/loky-47654-1h4td3_f'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/loky-47654-4luwrt_8'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/loky-47654-pejse85s'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/loky-47654-h1hwbtdz'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/loky-47654-85v_5rs1'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/loky-47654-fzbl36kx'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/loky-47654-qg7009cr'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/loky-47654-sfp_1so5'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/loky-47654-1yu33237'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/loky-47654-88qvv2bg'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/var/folders/vw/rzdqlhvj01g5vnqv4ktfn30w0000gn/T/joblib_memmapping_folder_47654_0d801923a3b64ecebc501c30f796bb1d_7afc05c347fb4552bb6c584ed2ce7372/47654-6250297568-a55584c794034672bc96327b8be44994.pkl'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/var/folders/vw/rzdqlhvj01g5vnqv4ktfn30w0000gn/T/joblib_memmapping_folder_47654_0d801923a3b64ecebc501c30f796bb1d_7afc05c347fb4552bb6c584ed2ce7372'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/var/folders/vw/rzdqlhvj01g5vnqv4ktfn30w0000gn/T/joblib_memmapping_folder_47654_eeae540e91df467ab5f2595e638be44c_3c842683d5ca4c76965606c53d79349c'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/var/folders/vw/rzdqlhvj01g5vnqv4ktfn30w0000gn/T/joblib_memmapping_folder_47654_d544a85b4108407899a1699b0ba265d0_316a7a40e9d1400aa57fa1b45941c229'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/var/folders/vw/rzdqlhvj01g5vnqv4ktfn30w0000gn/T/joblib_memmapping_folder_47654_3c041d44fdf840fbb37dcdcea3c1f516_9d443eda23344b68ba15c973cbb830c1'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/var/folders/vw/rzdqlhvj01g5vnqv4ktfn30w0000gn/T/joblib_memmapping_folder_47654_0d801923a3b64ecebc501c30f796bb1d_d0a7e715711d4d40a3c14fb6b58d1b2a'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/loky-47654-vrpgzh0l'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/loky-47654-b6hl7wcw'
+Traceback (most recent call last):
+  File "/opt/anaconda3/envs/.virtualenvs/lib/python3.9/site-packages/joblib/externals/loky/backend/resource_tracker.py", line 319, in main
+    del registry[rtype][name]
+KeyError: '/loky-47654-jluu4sz3'
