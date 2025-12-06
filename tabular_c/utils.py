@@ -22,20 +22,20 @@ def get_smart_copy(df, inplace, include_dtypes=None):
 def infer_types(df: pd.DataFrame):
     """
     Optimized type inference.
-    1. Vectorized object->category conversion.
-    2. NumPy-based min/max check for integer downcasting (skips Pandas overhead).
+    Vectorized object->category conversion.
+    NumPy-based min/max check for integer downcasting (skips Pandas overhead).
     """
-    # 1. Object -> Category (Vectorized)
+    # Object -> Category (Vectorized)
     obj_cols = df.select_dtypes(include=['object']).columns
     if len(obj_cols) > 0:
         df[obj_cols] = df[obj_cols].astype("category")
 
-    # 2. Float64 -> Float32
+    # Float64 -> Float32
     fcols = df.select_dtypes(include=['float64']).columns
     if len(fcols) > 0:
         df[fcols] = df[fcols].astype('float32')
 
-    # 3. Int64 -> Downcast (Fast Manual Checks via NumPy)
+    # Int64 -> Downcast (Fast Manual Checks via NumPy)
     icols = df.select_dtypes(include=['int64', 'int']).columns
     for col in icols:
         # Access .values to skip Pandas Series overhead
@@ -56,7 +56,7 @@ def load_cached(path):
     if not os.path.exists(path): return None
     pq_path = path.replace(".csv", ".parquet")
 
-    # 1. Try Parquet (Fastest)
+    # Try Parquet (Fastest)
     if os.path.exists(pq_path):
         try:
             return pd.read_parquet(pq_path, engine='pyarrow')

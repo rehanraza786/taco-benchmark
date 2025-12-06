@@ -75,14 +75,17 @@ def load_nyc_property_sales(path, random_state=config.RANDOM_STATE):
         raise ValueError("Could not find sale price column in nyc_property_sales.csv")
 
     # Zero-copy filtering
-    # 1. Coerce numeric in-place
+    # Coerce numeric in-place
     df[target] = pd.to_numeric(df[target], errors='coerce')
 
-    # 2. Drop NaNs in-place (avoids creating a mask array and a new DataFrame copy)
+    # Drop NaNs in-place (avoids creating a mask array and a new DataFrame copy)
     df.dropna(subset=[target], inplace=True)
 
-    # 3. Pop target (In-place column removal, returns Series)
+    # Pop target (In-place column removal, returns Series)
     y = df.pop(target).astype('float32')
 
-    # 4. Remaining df is X (No extra copy created)
+    df.reset_index(drop=True, inplace=True)
+    y.reset_index(drop=True, inplace=True)
+
+    # Remaining df is X (No extra copy created)
     return train_test_split(df, y, test_size=config.TEST_SIZE, random_state=random_state)

@@ -1,6 +1,5 @@
 """
 Central configuration file for the TACO benchmark.
-OPTIMIZED: Tuned for maximum hardware utilization and throughput.
 """
 import os
 import sklearn
@@ -50,7 +49,7 @@ TRY_INTEL_OPTIMIZATION = True
 
 # --- Directory Config ---
 DEFAULT_DATA_DIR = "data"
-DEFAULT_RESULTS_DIR = "results2"
+DEFAULT_RESULTS_DIR = "results"
 
 # --- Task & Metric Names ---
 TASK_CLASSIFICATION = "classification"
@@ -92,7 +91,7 @@ XGB_ESTIMATORS = 200
 
 # SAGA is faster for large datasets than liblinear
 LOGREG_SOLVER = 'saga'
-LOGREG_MAX_ITER = 1000
+LOGREG_MAX_ITER = 5000
 
 # --- Corruption Config ---
 # Paper Section 4.2: Scaling factors for unit mismatch

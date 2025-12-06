@@ -4,14 +4,23 @@ from .utils import get_working_copy, get_smart_copy
 import numpy as np
 import pandas as pd
 
-def apply_missingness(df: pd.DataFrame, y: pd.Series, severity=0.1, mnar=False, rng=None, inplace=False, col_idx=None, **kwargs):
+def apply_missingness(df: pd.DataFrame, y: pd.Series, severity=0.1, mnar=False, rng=None, inplace=False, col_idx=None,
+                      **kwargs):
     """
     Applies MCAR or MNAR missingness.
-    Use flat numpy views and float32 generation to minimize RAM usage.
     """
     rng = np.random.default_rng(rng)
     out = get_working_copy(df, inplace)
     if severity <= 0: return out, y
+
+    # Identify numerical columns that will receive NaNs
+    nums = col_idx['num'] if col_idx else []
+
+    if len(nums) > 0:
+        target_cols = out.columns[nums]
+        cols_to_cast = [c for c in target_cols if not pd.api.types.is_float_dtype(out[c])]
+        if cols_to_cast:
+            out[cols_to_cast] = out[cols_to_cast].astype(np.float32)
 
     # MNAR: Conditional on Minority Class
     if mnar and y is not None:
@@ -20,12 +29,8 @@ def apply_missingness(df: pd.DataFrame, y: pd.Series, severity=0.1, mnar=False, 
 
         if not np.any(row_mask): return out, y
 
-        target_cols_idx = col_idx['num'] if col_idx else range(out.shape[1])
-
-        if len(target_cols_idx) > 0:
-            subset_vals = out.iloc[row_mask, target_cols_idx].values
-            if subset_vals.dtype.kind == 'i':
-                 subset_vals = subset_vals.astype(np.float32)
+        if len(nums) > 0:
+            subset_vals = out.iloc[row_mask, nums].values
 
             n_cells = subset_vals.size
             n_mask = int(severity * n_cells)
@@ -33,22 +38,18 @@ def apply_missingness(df: pd.DataFrame, y: pd.Series, severity=0.1, mnar=False, 
             if n_mask > 0:
                 flat_indices = rng.choice(n_cells, size=n_mask, replace=False)
                 subset_vals.ravel()[flat_indices] = np.nan
-                out.iloc[row_mask, target_cols_idx] = subset_vals
+                out.iloc[row_mask, nums] = subset_vals
 
     # MCAR: Random global mask
     else:
-        # 1. Numerical Block
-        nums = col_idx['num'] if col_idx else []
+        # Numerical Block
         if len(nums) > 0:
             vals = out.iloc[:, nums].values
-            if vals.dtype != np.float32:
-                vals = vals.astype(np.float32)
-
             mask = rng.random(vals.shape, dtype=np.float32) < severity
             vals[mask] = np.nan
             out.iloc[:, nums] = vals
 
-        # 2. Categorical Block
+        # Categorical Block
         cats = col_idx['cat'] if col_idx else []
         if len(cats) > 0:
             n_rows = len(out)
@@ -76,9 +77,14 @@ def apply_scaling_errors(df: pd.DataFrame, y: pd.Series, severity=0.1, rng=None,
     factors = rng.choice(config.SCALING_FACTORS, size=k, replace=True)
 
     for idx, factor in zip(chosen_indices, factors):
+        col_name = out.columns[idx]
+        out[col_name] = out[col_name].astype(np.float32)
+
         vals = out.iloc[:, idx].values
-        if vals.dtype.kind != 'f':
-            vals = vals.astype(np.float32)
+
+        if not vals.flags.writeable:
+            vals = vals.copy()
+
         vals *= factor
         out.iloc[:, idx] = vals
 
@@ -112,10 +118,11 @@ def apply_categorical_remap(df: pd.DataFrame, y: pd.Series, severity=0.1, rng=No
 
     return out, y
 
-def apply_noise_injection(df, y, severity=0.1, gaussian=True, rng=None, inplace=False, precomputed_stds=None, col_idx=None, **kwargs):
+
+def apply_noise_injection(df, y, severity=0.1, gaussian=True, rng=None, inplace=False, precomputed_stds=None,
+                          col_idx=None, **kwargs):
     """
     Adds Gaussian or Uniform noise.
-    OPTIMIZED: Strictly uses in-place operations and float32 buffers.
     """
     rng = np.random.default_rng(rng)
     out = get_smart_copy(df, inplace, include_dtypes=[np.number])
@@ -123,9 +130,13 @@ def apply_noise_injection(df, y, severity=0.1, gaussian=True, rng=None, inplace=
     nums = col_idx['num'] if col_idx else []
     if len(nums) == 0: return out, y
 
+    target_cols = out.columns[nums]
+    out[target_cols] = out[target_cols].astype(np.float32)
+
     vals = out.iloc[:, nums].values
-    if vals.dtype != np.float32:
-        vals = vals.astype(np.float32)
+
+    if not vals.flags.writeable:
+        vals = vals.copy()
 
     if precomputed_stds is not None:
         if hasattr(precomputed_stds, "values"):
@@ -149,6 +160,7 @@ def apply_noise_injection(df, y, severity=0.1, gaussian=True, rng=None, inplace=
 
     noise_buffer *= scaled_severity
     vals += noise_buffer
+
     out.iloc[:, nums] = vals
 
     return out, y
@@ -160,8 +172,10 @@ def apply_rare_class_dilution(X_test, y_test, severity=0.1, minority_label=confi
         X_test = X_test.copy(deep=True)
         y_test = y_test.copy(deep=True)
 
-    if not isinstance(X_test, pd.DataFrame): X_test = pd.DataFrame(X_test)
-    if not isinstance(y_test, pd.Series): y_test = pd.Series(y_test, index=X_test.index)
+    if not isinstance(X_test, pd.DataFrame):
+        X_test = pd.DataFrame(X_test)
+    if not isinstance(y_test, pd.Series):
+        y_test = pd.Series(y_test, index=X_test.index)
 
     mask_min = (y_test == minority_label)
     count_min = mask_min.sum()

@@ -53,7 +53,7 @@ def _evaluate_group_task(pipes_dict, X_eval_mmap, y_eval_mmap, corr_name, s, cor
     """
     Worker function.
     """
-    # 1. Apply Primary Corruption
+    # Apply Primary Corruption
     # Use task-specific seed to ensure distinct entropy between corruptions
     Xc, yc = corr_fn(X_eval_mmap, y_eval_mmap, s, rng=task_seed, inplace=False,
                      col_idx=col_indices, precomputed_stds=precomputed_stds)
@@ -61,7 +61,7 @@ def _evaluate_group_task(pipes_dict, X_eval_mmap, y_eval_mmap, corr_name, s, cor
     final_corr_name = corr_name
     final_severity = s
 
-    # 2. Apply Secondary Corruption
+    # Apply Secondary Corruption
     if secondary_corr:
         c2_name, c2_fn, s2 = secondary_corr
         Xc, yc = c2_fn(Xc, yc, s2, rng=task_seed, inplace=True,
@@ -71,7 +71,7 @@ def _evaluate_group_task(pipes_dict, X_eval_mmap, y_eval_mmap, corr_name, s, cor
 
     results = []
 
-    # 3. Evaluate All Models
+    # Evaluate All Models
     for model_name, pipe in pipes_dict.items():
         try:
             if is_classification:
@@ -203,7 +203,7 @@ def run_suite_generic(name, X_train, X_test, y_train, y_test, results_dir, sever
 
         print(f"[{name}] Running {len(tasks)} evaluation tasks (Parallel)...")
 
-        batch_results = Parallel(n_jobs=config.BENCHMARK_N_JOBS, prefer="loky", batch_size=1)(
+        batch_results = Parallel(n_jobs=config.BENCHMARK_N_JOBS, prefer="processes", batch_size=1)(
             delayed(_evaluate_group_task)(*t) for t in tasks
         )
 

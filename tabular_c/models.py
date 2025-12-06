@@ -31,7 +31,7 @@ def build_preprocessor(X: pd.DataFrame, numeric_strategy=config.DEFAULT_IMPUTE_S
 
     num_tf = Pipeline([
         ("imputer", SimpleImputer(strategy=numeric_strategy)),
-        # OPTIMIZATION: copy=False allows in-place scaling if the memory layout permits.
+        # copy=False allows in-place scaling if the memory layout permits.
         ("scaler", StandardScaler(copy=False))
     ])
     cat_tf = Pipeline([
@@ -73,43 +73,64 @@ class TorchMLPBase(BaseEstimator):
         return nn.Sequential(*layers).to(self.device)
 
     def _fit_shared(self, X, y, loss_fn):
-        if hasattr(X, "toarray"): X = X.toarray()
+        # Zero-copy conversion to numpy float32
+        if hasattr(X, "toarray"):
+            X = X.toarray()
 
-        # Use np.asarray with float32 to allow zero-copy if input is already float32
         X = np.asarray(X, dtype=np.float32)
+        y = np.asarray(y, dtype=np.float32)
+
+        if not X.flags.writeable:
+            X = X.copy()
+        if not y.flags.writeable:
+            y = y.copy()
 
         self.in_dim_ = X.shape[1]
+
+        # Reset seed for reproducibility
         torch.manual_seed(self.random_state)
 
+        # Build Model (Move model to GPU immediately)
         self.model_ = self._build_model(self.in_dim_, 1, isinstance(loss_fn, nn.BCELoss))
-        opt = torch.optim.Adam(self.model_.parameters(), lr=self.lr)
 
+        # Create Tensors on CPU (Pin memory for faster transfer if using CUDA)
+        # Note: We do NOT send .to(self.device) here!
         try:
-            X_t = torch.as_tensor(X, device=self.device)
-            y_t = torch.as_tensor(y, dtype=torch.float32, device=self.device).reshape(-1, 1)
-        except RuntimeError:
             X_t = torch.from_numpy(X)
-            y_t = torch.from_numpy(y.astype(np.float32)).reshape(-1, 1)
+            y_t = torch.from_numpy(y).reshape(-1, 1)
+        except Exception:
+            # Fallback if from_numpy fails (e.g. negative strides)
+            X_t = torch.tensor(X, dtype=torch.float32)
+            y_t = torch.tensor(y, dtype=torch.float32).reshape(-1, 1)
+
+        # Setup optimizer
+        opt = torch.optim.Adam(self.model_.parameters(), lr=self.lr)
 
         n_samples = len(X)
         n_batches = (n_samples + self.batch - 1) // self.batch
 
         self.model_.train()
-        on_gpu = (X_t.device.type == self.device.type) and (self.device.type != 'cpu')
+
+        # Check if we are actually using a GPU
+        using_gpu = (self.device.type != 'cpu')
 
         for _ in range(self.epochs):
-            perm = torch.randperm(n_samples, device=self.device if on_gpu else 'cpu')
+            # Shuffle indices on CPU
+            perm = torch.randperm(n_samples)
 
             for i in range(n_batches):
                 start = i * self.batch
                 end = start + self.batch
                 indices = perm[start:end]
 
-                if on_gpu:
-                    xb, yb = X_t[indices], y_t[indices]
-                else:
+                # Move ONLY this batch to the device
+                if using_gpu:
+                    # non_blocking=True overlaps data transfer with computation
                     xb = X_t[indices].to(self.device, non_blocking=True)
                     yb = y_t[indices].to(self.device, non_blocking=True)
+                else:
+                    xb = X_t[indices]
+                    yb = y_t[indices]
 
                 opt.zero_grad(set_to_none=True)
                 pred = self.model_(xb)
@@ -117,10 +138,14 @@ class TorchMLPBase(BaseEstimator):
                 loss.backward()
                 opt.step()
 
-        # Move model to CPU before serialization/pickling.
+        # Move model back to CPU for pickling/joblib serialization
         self.model_.cpu()
+
+        # Explicitly delete optimizer to free graph references
         del opt
-        torch.cuda.empty_cache()
+        if using_gpu:
+            torch.cuda.empty_cache()
+
         return self
 
     def _predict_shared(self, X):
