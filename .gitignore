@@ -6,6 +6,7 @@ venv/
 
 # Results
 results/
+figs/
 *.csv
 
 .idea/

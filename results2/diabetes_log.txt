@@ -1,3 +1,0 @@
---- Running predefined TACO benchmarks ---
---- Running dataset: diabetes (classification) ---
-[diabetes] Running logreg (clean)...
