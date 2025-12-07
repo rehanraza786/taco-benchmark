@@ -1,190 +1,181 @@
-"""
-Utility script to generate plots from TACO benchmark results.
-"""
-from __future__ import annotations
-
-from pathlib import Path
+import os
+import sys
+import glob
 import pandas as pd
+import seaborn as sns
 import matplotlib.pyplot as plt
-from tabular_c import config
 
-def load_metrics(path: str | Path) -> pd.DataFrame:
-    """Load a metrics CSV into a DataFrame."""
-    path = Path(path)
-    return pd.read_csv(path)
+# -----------------------------------------------------------------------------
+# 1. Path Setup
+# -----------------------------------------------------------------------------
+# Get the directory where this script resides (root/scripts/)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+# Get the project root directory (root/)
+project_root = os.path.dirname(script_dir)
 
-def plot_adult_robustness_curves(
-    metrics_path: str | Path,
-    output_path: str | Path = "figs/adult_robustness_curves.pdf",
-    models=(config.MODEL_LOGREG, config.MODEL_RF, config.MODEL_XGB, config.MODEL_FFN),
-    corruptions=(config.CORR_NOISE_GAUSSIAN, config.CORR_CAT_REMAP),
-    metric_name=config.METRIC_AUC, # <-- Use constant
-) -> None:
-    """
-    Plot AUC vs severity for several models on Adult under two corruptions.
-    """
-    metrics_path = Path(metrics_path)
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+# Add project root to sys.path so we can import 'tabular_c' modules if needed
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
-    df = load_metrics(metrics_path)
-
-    df = df[
-        (df["dataset"] == "adult")
-        & (df["task"] == config.TASK_CLASSIFICATION)
-        & (df["metric"] == metric_name)
-        & (df["corruption"].isin(list(corruptions) + [config.CORRUPTION_CLEAN]))
-    ].copy()
-
-    # Ensure severity is numeric
-    df["severity"] = df["severity"].astype(float)
-
-    fig, axes = plt.subplots(1, len(corruptions), figsize=(10, 4), sharey=True)
-    if len(corruptions) == 1:
-        axes = [axes]
-
-    for ax, corr in zip(axes, corruptions):
-        for model in models:
-            df_model_clean = df[(df["model"] == model) & (df["corruption"] == config.CORRUPTION_CLEAN)]
-            df_model_corr = df[
-                (df["model"] == model) & (df["corruption"] == corr)
-            ].sort_values("severity")
-
-            if df_model_corr.empty:
-                print(f"Warning: No data for model='{model}', corruption='{corr}'")
-                continue
-
-            x = df_model_corr["severity"].tolist()
-            y = df_model_corr["value"].tolist()
-
-            if not df_model_clean.empty:
-                clean_val = df_model_clean["value"].iloc[0]
-                if 0.0 not in x:
-                    x = [0.0] + x
-                    y = [clean_val] + y
-
-            ax.plot(x, y, marker="o", label=model)
-
-        ax.set_title(corr.replace("_", " ").title())
-        ax.set_xlabel("Severity")
-        ax.grid(True, linestyle="--", linewidth=0.5)
-        ax.set_xticks(config.DEFAULT_SEVERITIES)
-        ax.set_xticks([0.0] + list(config.DEFAULT_SEVERITIES), minor=False)
-        ax.set_xticklabels([0.0] + list(config.DEFAULT_SEVERITIES))
+# Import config loader from your package
+try:
+    from tabular_c.utils import load_config
+except ImportError:
+    # Fallback if package isn't installed in environment
+    import yaml
 
 
-    axes[0].set_ylabel(metric_name.upper())
-
-    handles, labels = axes[0].get_legend_handles_labels()
-    if handles:
-        fig.legend(
-            handles,
-            labels,
-            loc="upper center",
-            ncol=min(len(models), 4),
-            bbox_to_anchor=(0.5, 1.05),
-        )
-
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
-    fig.savefig(output_path, bbox_inches="tight")
-    plt.close(fig)
+    def load_config(path):
+        with open(path, 'r') as f: return yaml.safe_load(f)
 
 
-def compute_robustness_scores(df: pd.DataFrame, metric_name: str = config.METRIC_AUC) -> pd.DataFrame:
-    """
-    Compute robustness scores R_{m,c}
-    """
-    df = df[df["metric"] == metric_name].copy()
+def main():
+    # -------------------------------------------------------------------------
+    # 2. Configuration & Directory Resolution
+    # -------------------------------------------------------------------------
+    # User specified config is in 'tabular_c' directory
+    config_path = os.path.join(project_root, 'tabular_c', 'config.yaml')
 
-    df_clean = df[df["corruption"] == config.CORRUPTION_CLEAN]
-    clean_map = df_clean.groupby("model")["value"].mean().to_dict()
+    # User specified results is in root directory
+    results_dir = os.path.join(project_root, 'results')
 
-    df_corr = df[df["corruption"] != config.CORRUPTION_CLEAN].copy()
-    df_corr = df_corr[df_corr["model"].isin(clean_map.keys())]
+    # Optional: If config exists, check if it overrides results_dir
+    if os.path.exists(config_path):
+        print(f"Loading config from: {config_path}")
+        config = load_config(config_path)
+        # If config has a results_dir setting, use it, otherwise stick to root/results
+        cfg_dir = config.get('results_dir')
+        if cfg_dir:
+            # Handle relative path in config
+            if os.path.isabs(cfg_dir):
+                results_dir = cfg_dir
+            else:
+                results_dir = os.path.join(project_root, cfg_dir)
 
-    def norm_row(row):
-        # Add safety check for division by zero
-        clean_val = clean_map.get(row["model"])
-        if clean_val is None or clean_val == 0:
-            return 0.0
-        return row["value"] / clean_val
+    print(f"Reading results from: {results_dir}")
 
-    df_corr["normalized"] = df_corr.apply(norm_row, axis=1)
+    # -------------------------------------------------------------------------
+    # 3. Dynamic Data Loading
+    # -------------------------------------------------------------------------
+    # Find all CSVs matching the pattern
+    csv_pattern = os.path.join(results_dir, "metrics_*.csv")
+    files = glob.glob(csv_pattern)
 
-    scores = (
-        df_corr.groupby(["model", "corruption"])["normalized"]
-        .mean()
-        .reset_index()
-        .rename(columns={"normalized": "robustness_score"})
-    )
-    return scores
-
-
-def plot_adult_robustness_bars(
-    metrics_path: str | Path,
-    output_path: str | Path = "paper/figs/adult_robustness_bars.pdf",
-    models=(config.MODEL_LOGREG, config.MODEL_RF, config.MODEL_XGB, config.MODEL_FFN),
-    metric_name=config.METRIC_AUC,
-) -> None:
-    """
-    Plot robustness scores R_{m,c} as a grouped bar chart for the Adult dataset.
-    """
-    metrics_path = Path(metrics_path)
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    df = load_metrics(metrics_path)
-
-    df = df[(df["dataset"] == "adult") & (df["task"] == config.TASK_CLASSIFICATION)].copy()
-    scores = compute_robustness_scores(df, metric_name=metric_name)
-    scores = scores[scores["model"].isin(models)]
-
-    pivot = scores.pivot(index="model", columns="corruption", values="robustness_score").fillna(0.0)
-    pivot = pivot.reindex(models) # Ensure consistent model order
-
-    corruption_names = [c for c in pivot.columns if c != config.CORRUPTION_CLEAN]
-    if not corruption_names:
+    if not files:
+        print(f"No files found matching {csv_pattern}")
         return
-    pivot = pivot[corruption_names]
 
-    num_models = pivot.shape[0]
-    num_corrs = pivot.shape[1]
+    dataframes = []
+    for filename in files:
+        try:
+            df = pd.read_csv(filename)
+            dataframes.append(df)
+        except Exception as e:
+            print(f"Error reading {filename}: {e}")
 
-    fig, ax = plt.subplots(figsize=(10, 4))
+    if not dataframes:
+        print("No valid dataframes loaded.")
+        return
 
-    x_positions = list(range(num_models))
-    width = 0.8 / max(num_corrs, 1)
+    full_df = pd.concat(dataframes, ignore_index=True)
+    full_df['value'] = pd.to_numeric(full_df['value'], errors='coerce')
 
-    for i, corr in enumerate(corruption_names):
-        offsets = [x + (i - (num_corrs - 1) / 2) * width for x in x_positions]
-        ax.bar(
-            offsets,
-            pivot[corr].values,
-            width=width,
-            label=corr.replace("_", " ").title(),
-        )
+    # -------------------------------------------------------------------------
+    # 4. Data Preparation (Subsets)
+    # -------------------------------------------------------------------------
+    # Baseline (Clean)
+    clean_df = full_df[full_df['corruption'] == 'clean']
 
-    ax.set_xticks(x_positions)
-    ax.set_xticklabels(models, rotation=20, ha="right")
-    ax.set_ylabel("Robustness score $R_{m,c}$")
-    ax.set_xlabel("Model")
-    ax.set_ylim(0.0, 1.05)
-    ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.7)
-    ax.legend(title="Corruption", ncol=min(num_corrs, 4))
+    # Stress Test (Mixed Corruptions)
+    # Checks for explicit '0.2+0.2' severity or string containment
+    stress_df = full_df[
+        (full_df['severity'] == '0.2+0.2') |
+        (full_df['severity'].astype(str).str.contains(r'\+', regex=True))
+        ].copy()
+    stress_agg = stress_df.groupby(['dataset', 'model'])['value'].mean().reset_index()
 
-    fig.tight_layout()
-    fig.savefig(output_path, bbox_inches="tight")
-    plt.close(fig)
+    # MCAR Robustness
+    mcar_df = full_df[full_df['corruption'] == 'missingness_mcar'].copy()
+    mcar_df['severity'] = pd.to_numeric(mcar_df['severity'], errors='coerce')
+
+    # Add clean baseline (severity 0.0) to MCAR plot data
+    clean_for_mcar = clean_df.copy()
+    clean_for_mcar['corruption'] = 'missingness_mcar'
+    clean_for_mcar['severity'] = 0.0
+    mcar_plot_df = pd.concat([clean_for_mcar, mcar_df], ignore_index=True)
+
+    # -------------------------------------------------------------------------
+    # 5. Plotting Logic
+    # -------------------------------------------------------------------------
+    # Define datasets to plot
+    datasets = ['porto', 'nyc', 'ieee', 'diabetes', 'adult']
+    dataset_titles = {
+        'porto': 'Porto',
+        'nyc': 'NYC',
+        'ieee': 'IEEE',
+        'diabetes': 'Diabetes',
+        'adult': 'Adult'
+    }
+
+    # Setup output directory
+    plots_dir = os.path.join(results_dir, 'plots')
+    os.makedirs(plots_dir, exist_ok=True)
+
+    sns.set(style="whitegrid")
+
+    # Figure Setup
+    fig = plt.figure(figsize=(24, 11))
+    gs = fig.add_gridspec(5, 3, wspace=0.25, hspace=0.5)
+
+    for i, ds in enumerate(datasets):
+        # --- Column 1: Baseline (Clean) ---
+        ax1 = fig.add_subplot(gs[i, 0])
+        subset_c = clean_df[clean_df['dataset'] == ds].sort_values('value', ascending=(ds == 'nyc'))
+
+        if not subset_c.empty:
+            # FIX: Added hue='model' and legend=False to fix deprecation warning
+            sns.barplot(x='model', y='value', hue='model', data=subset_c, ax=ax1, palette='viridis', legend=False)
+
+            ax1.set_ylabel('RMSE' if ds == 'nyc' else 'AUC', fontsize=12)
+            ax1.set_xlabel('')
+            # Add Row Title on the left
+            ax1.text(-0.25, 0.5, dataset_titles[ds], transform=ax1.transAxes,
+                     fontsize=16, fontweight='bold', va='center', rotation=90)
+            if i == 0:
+                ax1.set_title('Baseline (Clean)', fontsize=18, fontweight='bold')
+
+        # --- Column 2: Robustness (MCAR) ---
+        ax2 = fig.add_subplot(gs[i, 1])
+        subset_m = mcar_plot_df[mcar_plot_df['dataset'] == ds]
+
+        if not subset_m.empty:
+            sns.lineplot(x='severity', y='value', hue='model', marker='o',
+                         data=subset_m, ax=ax2, legend=(i == 0))
+            ax2.set_ylabel('')
+            ax2.set_xlabel('')
+            if i == 0:
+                ax2.set_title('Robustness (Missing)', fontsize=18, fontweight='bold')
+                # Legend adjustment
+                ax2.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize='small')
+
+        # --- Column 3: Stress Test (Mixed) ---
+        ax3 = fig.add_subplot(gs[i, 2])
+        subset_s = stress_agg[stress_agg['dataset'] == ds].sort_values('value', ascending=(ds == 'nyc'))
+
+        if not subset_s.empty:
+            # FIX: Added hue='model' and legend=False to fix deprecation warning
+            sns.barplot(x='model', y='value', hue='model', data=subset_s, ax=ax3, palette='magma', legend=False)
+
+            ax3.set_ylabel('')
+            ax3.set_xlabel('')
+            if i == 0:
+                ax3.set_title('Stress Test (Mixed)', fontsize=18, fontweight='bold')
+
+    # Save Output
+    output_path = os.path.join(plots_dir, 'graphs.png')
+    plt.savefig(output_path, bbox_inches='tight')
+    print(f"Plots saved successfully to: {output_path}")
 
 
 if __name__ == "__main__":
-    metrics_file = Path(config.DEFAULT_RESULTS_DIR) / config.METRICS_CSV_CLASSIFICATION.format(name="adult")
-    if not metrics_file.exists():
-        raise FileNotFoundError(
-            f"Expected metrics file at {metrics_file}. "
-            "Run the benchmark first (e.g., `python -m tabular_c.cli --only adult`)."
-        )
-
-    plot_adult_robustness_curves(metrics_file)
-    plot_adult_robustness_bars(metrics_file)
-    print("Saved figures to figs/")
+    main()
